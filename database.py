@@ -1,67 +1,81 @@
+# database.py
 import sqlite3
-import time
 
 DB_NAME = "ode_class.db"
 
 def init_db():
-    """Creates the database and the users table if they don't exist."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Create the main table
+    # NEW SCHEMA: Centered around SID and Telegram Username
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            telegram_id INTEGER PRIMARY KEY,
+            student_id TEXT PRIMARY KEY,
             name TEXT,
-            student_id TEXT,
+            telegram_username TEXT UNIQUE, 
+            numeric_id INTEGER UNIQUE,     
             text_score INTEGER DEFAULT 0,
             photo_score INTEGER DEFAULT 0,
             file_score INTEGER DEFAULT 0,
-            total_score INTEGER DEFAULT 0,
-            last_msg_timestamp REAL DEFAULT 0
+            total_score INTEGER DEFAULT 0
+        )
+    ''')
+    
+    # A separate table for unknown users (people not in your roster)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS unknown_users (
+            numeric_id INTEGER PRIMARY KEY,
+            telegram_username TEXT,
+            first_name TEXT,
+            total_score INTEGER DEFAULT 0
         )
     ''')
     
     conn.commit()
     conn.close()
-    print("Database initialized successfully.")
+    print("New database initialized with roster support.")
 
-# We can run this file directly to test it
-if __name__ == '__main__':
-    init_db()
-
-def add_points(telegram_id, name, msg_type):
-    """Adds points to a user based on message type."""
+def add_points(username, numeric_id, first_name, msg_type):
+    """Matches the user and adds points."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Ensure the user exists in the database (INSERT OR IGNORE)
+    # Strip the '@' from the username just in case
+    clean_username = username.replace('@', '').lower() if username else None
+
+    # Step 1: Try to find them in the official roster by username OR numeric_id
     cursor.execute('''
-        INSERT OR IGNORE INTO users (telegram_id, name) 
-        VALUES (?, ?)
-    ''', (telegram_id, name))
+        SELECT student_id FROM users 
+        WHERE telegram_username = ? OR numeric_id = ?
+    ''', (clean_username, numeric_id))
     
-    # 2. Always update their latest Telegram name just in case they changed it
-    cursor.execute('''
-        UPDATE users SET name = ? WHERE telegram_id = ?
-    ''', (name, telegram_id))
+    student = cursor.fetchone()
     
-    # 3. Add the points
-    if msg_type == 'file':
-        cursor.execute('''
-            UPDATE users SET file_score = file_score + 1, total_score = total_score + 3 
-            WHERE telegram_id = ?
-        ''', (telegram_id,))
-    elif msg_type == 'photo':
-        cursor.execute('''
-            UPDATE users SET photo_score = photo_score + 1, total_score = total_score + 2 
-            WHERE telegram_id = ?
-        ''', (telegram_id,))
-    elif msg_type == 'text':
-        cursor.execute('''
-            UPDATE users SET text_score = text_score + 1, total_score = total_score + 1 
-            WHERE telegram_id = ?
-        ''', (telegram_id,))
+    if student:
+        sid = student[0]
+        # Lock in their numeric_id if we haven't already
+        cursor.execute('UPDATE users SET numeric_id = ? WHERE student_id = ?', (numeric_id, sid))
         
+        # Add points to the official roster
+        if msg_type == 'file':
+            cursor.execute('UPDATE users SET file_score = file_score + 1, total_score = total_score + 3 WHERE student_id = ?', (sid,))
+        elif msg_type == 'photo':
+            cursor.execute('UPDATE users SET photo_score = photo_score + 1, total_score = total_score + 2 WHERE student_id = ?', (sid,))
+        elif msg_type == 'text':
+            cursor.execute('UPDATE users SET text_score = text_score + 1, total_score = total_score + 1 WHERE student_id = ?', (sid,))
+    else:
+        # Step 2: If they aren't in the roster, log them in unknown_users
+        cursor.execute('''
+            INSERT OR IGNORE INTO unknown_users (numeric_id, telegram_username, first_name) 
+            VALUES (?, ?, ?)
+        ''', (numeric_id, clean_username, first_name))
+        
+        if msg_type in ['file', 'photo', 'text']:
+            points = 3 if msg_type == 'file' else 2 if msg_type == 'photo' else 1
+            cursor.execute('UPDATE unknown_users SET total_score = total_score + ? WHERE numeric_id = ?', (points, numeric_id))
+
     conn.commit()
     conn.close()
+
+if __name__ == '__main__':
+    init_db()

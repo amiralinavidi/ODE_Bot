@@ -33,6 +33,8 @@ def track_activity(message):
         
     user_id = message.from_user.id
     user_name = message.from_user.first_name
+    # Get the text username (returns None if they don't have one)
+    telegram_username = message.from_user.username 
     
     # Ignore admin messages
     if user_id == ADMIN_ID:
@@ -42,23 +44,21 @@ def track_activity(message):
     
     # Handle Files (+3)
     if content_type in ['document', 'video', 'voice', 'audio']:
-        add_points(user_id, user_name, 'file')
-        print(f"[DB] +3 points to {user_name} for a file.")
+        add_points(telegram_username, user_id, user_name, 'file')
+        print(f"[DB] +3 points for file.")
         
     # Handle Photos (+2)
     elif content_type == 'photo':
-        add_points(user_id, user_name, 'photo')
-        print(f"[DB] +2 points to {user_name} for a photo.")
+        add_points(telegram_username, user_id, user_name, 'photo')
+        print(f"[DB] +2 points for photo.")
         
     # Handle Text (+1 with Junk Filter)
     elif content_type == 'text':
         raw_text = message.text
-        # Clean text: remove punctuation, strip whitespace, make lowercase
         clean_text = re.sub(r'[^\w\s]', '', raw_text).strip().lower()
         
-        # Check if text is valid (longer than 2 chars, not a stop word, or is just math digits)
         is_valid_content = (len(clean_text) > 2 and clean_text not in STOP_WORDS) or clean_text.isdigit()
         
         if is_valid_content:
-            add_points(user_id, user_name, 'text')
-            print(f"[DB] +1 point to {user_name} for valid text.")
+            add_points(telegram_username, user_id, user_name, 'text')
+            print(f"[DB] +1 point for valid text.")
